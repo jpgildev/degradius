@@ -31,27 +31,77 @@ body {
 }
 
 .hud {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
 h1 {
   margin: 0;
-  font-size: clamp(1.2rem, 2.2vw, 1.8rem);
+  font-size: clamp(1.1rem, 2.1vw, 1.65rem);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--glow);
   text-shadow: 0 0 8px #2db8ff;
 }
 
+.hud-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hud-leading,
+.hud-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #0f2741;
+  border: 1px solid #1f4c7c;
+  font-size: 0.95rem;
+}
+
+.hud-sep {
+  opacity: 0.65;
+}
+
+.life-ship {
+  width: 22px;
+  height: 12px;
+  display: inline-block;
+  background: #dce9ff;
+  clip-path: polygon(0 50%, 28% 0, 72% 18%, 100% 50%, 72% 82%, 28% 100%);
+  position: relative;
+}
+
+.life-ship::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 4px;
+  width: 8px;
+  height: 4px;
+  background: #66b9ff;
+}
+
+.life-ship::after {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 4px;
+  width: 4px;
+  height: 4px;
+  background: #ff7d45;
+}
+
 .stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  font-size: 0.95rem;
+  gap: 8px;
+  font-size: 0.87rem;
 }
 
 .stats span {

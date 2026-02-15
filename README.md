@@ -30,3 +30,4 @@ In `game.js`, adjust:
 - `hardnessPalette`, `makeColumn()` for terrain behavior
 - `damageBunkers()` and `explodeBomb()` for weapon balance
 - `initLevel()` for bomb economy and overall difficulty pace
+

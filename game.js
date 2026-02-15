@@ -7,6 +7,8 @@ const ui = {
   best: document.getElementById("best"),
   combo: document.getElementById("combo"),
   power: document.getElementById("power"),
+  bombMode: document.getElementById("bombMode"),
+  megaCd: document.getElementById("megaCd"),
   lives: document.getElementById("lives"),
   fuel: document.getElementById("fuel"),
   bombs: document.getElementById("bombs")
@@ -39,6 +41,13 @@ const shotPatterns = [
   [{ dy: -6, vy: -0.24 }, { dy: 0, vy: 0 }, { dy: 6, vy: 0.24 }],
   [{ dy: -8, vy: -0.3 }, { dy: -2, vy: -0.09 }, { dy: 2, vy: 0.09 }, { dy: 8, vy: 0.3 }]
 ];
+const shotTypePalette = {
+  laser: { core: "#e8fdff", glow: "rgba(120, 235, 255, 0.8)" },
+  pulse: { core: "#d6b4ff", glow: "rgba(183, 126, 255, 0.9)" },
+  rocket: { core: "#ffd9b1", glow: "rgba(255, 178, 101, 0.9)" },
+  blast: { core: "#fff3a8", glow: "rgba(255, 210, 90, 0.95)" },
+  shard: { core: "#9ffff0", glow: "rgba(96, 245, 222, 0.85)" }
+};
 const enemyArchetypes = {
   scout: { hpBase: 14, hpPerStage: 2, wMin: 16, wMax: 22, hMin: 9, hMax: 13, speedMin: 1.1, speedMax: 2.0, driftMin: 0.6, driftMax: 1.2, scoreBase: 48 },
   bruiser: { hpBase: 30, hpPerStage: 4, wMin: 22, wMax: 30, hMin: 12, hMax: 16, speedMin: 0.75, speedMax: 1.35, driftMin: 0.2, driftMax: 0.45, scoreBase: 92 },
@@ -70,7 +79,9 @@ const state = {
   floatTexts: [],
   particles: [],
   shockwaves: [],
+  bombQueue: [],
   bombsFalling: [],
+  shotQueue: [],
   shots: [],
   enemies: [],
   enemySpawnTimer: 0,
@@ -96,6 +107,9 @@ const state = {
   rapidLevel: 0,
   magnetLevel: 0,
   chainLevel: 0,
+  bombMode: "standard",
+  volleyCounter: 0,
+  megaCooldown: 0,
   pulseCooldown: 0,
   toast: "",
   toastTimer: 0,
@@ -203,6 +217,23 @@ function playSfx(kind) {
   if (kind === "hit") {
     playNoise(0.08, 0.05, 900);
     playTone(220, 120, 0.1, 0.02, "square");
+    return;
+  }
+  if (kind === "laser") {
+    playTone(780, 620, 0.045, 0.012, "square");
+    return;
+  }
+  if (kind === "rocket") {
+    playTone(260, 180, 0.08, 0.02, "triangle");
+    playNoise(0.05, 0.018, 950);
+    return;
+  }
+  if (kind === "pulse_shot") {
+    playTone(520, 760, 0.065, 0.016, "triangle");
+    return;
+  }
+  if (kind === "blast_shot") {
+    playTone(360, 220, 0.1, 0.022, "sawtooth");
     return;
   }
   if (kind === "life_lost") {
@@ -423,9 +454,11 @@ function initLevel() {
   state.enemyProjectiles = [];
   state.floatTexts = [];
   state.shockwaves = [];
+  state.bombQueue = [];
+  state.shotQueue = [];
   state.shots = [];
   state.enemies = [];
-  state.enemySpawnTimer = 78;
+  state.enemySpawnTimer = 102;
   state.particles = [];
   state.gameOver = false;
   state.message = "";
@@ -443,6 +476,7 @@ function initLevel() {
   state.combo = 1;
   state.comboTimer = 0;
   state.pulseCooldown = 0;
+  state.volleyCounter = 0;
   state.toast = "";
   state.toastTimer = 0;
   state.player.speed = 4.8 + (state.speedLevel - 1) * 0.55;
@@ -475,32 +509,239 @@ function spawnShockwave(x, y, maxRadius, life = 22, color = "#ffd27a") {
   });
 }
 
+function createBomb(params = {}) {
+  const vxWorld = params.vxWorld ?? state.scrollSpeed + 2.25 + state.player.vx * 0.6;
+  return {
+    type: params.type || "standard",
+    x: params.x ?? state.player.x + 8,
+    y: params.y ?? state.player.y + 8,
+    vxWorld,
+    vy: params.vy ?? 1.8,
+    blast: params.blast ?? 82,
+    phase: params.phase || "air",
+    runnerTimer: params.runnerTimer ?? 8,
+    runnerSteps: params.runnerSteps ?? 0
+  };
+}
+
+function queueBomb(delay, params) {
+  state.bombQueue.push({ delay, params });
+}
+
 function spawnBomb() {
   if (state.player.cooldown > 0 || state.gameOver) return;
   if (!UNLIMITED_BOMBS && state.bombs <= 0) return;
   if (!UNLIMITED_BOMBS) state.bombs -= 1;
-  const vxWorld = state.scrollSpeed + 2.25 + state.player.vx * 0.6;
-  state.player.cooldown = 16;
+
   const blastScale = 1 + (state.bombLevel - 1) * 0.22;
-  state.bombsFalling.push({
-    x: state.player.x + 8,
-    y: state.player.y + 8,
-    vxWorld,
-    vy: 1.8,
-    blast: 82 * blastScale
-  });
+  const baseBlast = 82 * blastScale;
+
+  if (state.bombMode === "mega") {
+    if (state.megaCooldown > 0) {
+      showToast(`Mega Cooldown ${(state.megaCooldown / 60).toFixed(1)}s`);
+      return;
+    }
+    state.player.cooldown = 26;
+    state.megaCooldown = 720;
+    state.bombsFalling.push(
+      createBomb({
+        type: "mega",
+        blast: baseBlast * 2.45,
+        vy: 2.2,
+        vxWorld: state.scrollSpeed + 2.05 + state.player.vx * 0.55
+      })
+    );
+    queueBomb(18, { type: "cluster", blast: baseBlast * 0.55, vy: 1.5 });
+    queueBomb(34, { type: "runner", blast: baseBlast * 0.7, vy: 1.45 });
+  } else if (state.bombMode === "cluster") {
+    state.player.cooldown = 18;
+    state.bombsFalling.push(createBomb({ type: "cluster", blast: baseBlast * 0.9, vy: 1.65 }));
+    queueBomb(10, { type: "standard", blast: baseBlast * 0.52, vy: 1.45 });
+    queueBomb(20, { type: "standard", blast: baseBlast * 0.52, vy: 1.4 });
+  } else if (state.bombMode === "runner") {
+    state.player.cooldown = 14;
+    state.bombsFalling.push(createBomb({ type: "runner", blast: baseBlast * 0.95, vy: 1.6 }));
+    queueBomb(12, { type: "runner", blast: baseBlast * 0.55, vy: 1.45 });
+  } else {
+    state.player.cooldown = 12;
+    state.bombsFalling.push(createBomb({ type: "standard", blast: baseBlast, vy: 1.8 }));
+    queueBomb(9, { type: "standard", blast: baseBlast * 0.45, vy: 1.4 });
+  }
+
   playSfx("bomb_drop");
+}
+
+function createShot(params = {}) {
+  return {
+    kind: params.kind || "laser",
+    x: params.x ?? state.player.x + state.player.w / 2 - 2,
+    y: params.y ?? state.player.y,
+    vx: params.vx ?? 9.8,
+    vy: params.vy ?? 0,
+    damage: params.damage ?? 10,
+    radius: params.radius ?? 3,
+    life: params.life ?? 80,
+    pierce: params.pierce ?? 0,
+    blastRadius: params.blastRadius ?? 0,
+    terrainDamage: params.terrainDamage ?? 0,
+    wobble: params.wobble ?? 0,
+    wobbleSpeed: params.wobbleSpeed ?? 0.22,
+    homing: params.homing ?? 0,
+    split: params.split ?? 0
+  };
+}
+
+function queueShot(delay, params) {
+  state.shotQueue.push({ delay, params });
+}
+
+function pushShotPattern(pattern, base) {
+  for (const node of pattern) {
+    state.shots.push(
+      createShot({
+        ...base,
+        y: (base.y ?? state.player.y) + node.dy,
+        vy: (base.vy ?? 0) + node.vy
+      })
+    );
+  }
+}
+
+function spawnSplitShards(x, y, power) {
+  const shardCount = 4 + state.chainLevel;
+  for (let i = 0; i < shardCount; i += 1) {
+    const angle = -0.35 + (i / Math.max(1, shardCount - 1)) * 0.9;
+    state.shots.push(
+      createShot({
+        kind: "shard",
+        x,
+        y,
+        vx: 6.8 + Math.cos(angle) * 2.3,
+        vy: Math.sin(angle) * 2.6,
+        damage: power * 0.42,
+        radius: 2.6,
+        life: 38,
+        pierce: 0
+      })
+    );
+  }
 }
 
 function spawnShot() {
   const pattern = shotPatterns[Math.min(shotPatterns.length - 1, state.weaponLevel - 1)];
-  const shotVx = 9.4 + state.weaponLevel * 0.45;
-  for (const node of pattern) {
-    state.shots.push({
-      x: state.player.x + state.player.w / 2 - 2,
-      y: state.player.y - 1 + node.dy,
-      vx: shotVx,
-      vy: node.vy
+  const volley = state.volleyCounter;
+  state.volleyCounter += 1;
+  const rapidBoost = state.rapidLevel * 0.25;
+  const shotVx = 9.3 + state.weaponLevel * 0.5 + rapidBoost;
+  const x = state.player.x + state.player.w / 2 - 2;
+  const y = state.player.y - 1;
+
+  pushShotPattern(pattern, {
+    kind: "laser",
+    x,
+    y,
+    vx: shotVx,
+    damage: 10 + state.weaponLevel * 2,
+    radius: 3.1,
+    life: 74
+  });
+
+  if (volley % 4 === 0 || state.weaponLevel >= 3) {
+    state.shots.push(
+      createShot({
+        kind: "pulse",
+        x: x + 2,
+        y,
+        vx: shotVx * 0.82,
+        damage: 16 + state.weaponLevel * 4,
+        radius: 5.5,
+        life: 84,
+        pierce: 2,
+        wobble: rand(0, Math.PI * 2),
+        wobbleSpeed: 0.28,
+        split: state.weaponLevel >= 4 ? 1 : 0
+      })
+    );
+    playSfx("pulse_shot");
+  } else {
+    playSfx("laser");
+  }
+
+  if (state.weaponLevel >= 2 && volley % 5 === 0) {
+    state.shots.push(
+      createShot({
+        kind: "rocket",
+        x: x - 1,
+        y: y - 2,
+        vx: 6.6 + state.weaponLevel * 0.45,
+        vy: -0.18,
+        damage: 22 + state.weaponLevel * 5,
+        radius: 4.2,
+        blastRadius: 42 + state.weaponLevel * 5,
+        terrainDamage: 30 + state.weaponLevel * 8,
+        life: 96,
+        homing: 0.045 + state.weaponLevel * 0.006
+      })
+    );
+    playSfx("rocket");
+  }
+
+  if (state.weaponLevel >= 3 && volley % 7 === 0) {
+    const fan = [-0.44, -0.16, 0.16, 0.44];
+    for (const drift of fan) {
+      state.shots.push(
+        createShot({
+          kind: "shard",
+          x: x + 6,
+          y: y + drift * 8,
+          vx: shotVx * 0.84,
+          vy: drift * 2.9,
+          damage: 8 + state.weaponLevel * 2,
+          radius: 2.5,
+          life: 54
+        })
+      );
+    }
+  }
+
+  if (state.weaponLevel >= 4 && volley % 11 === 0) {
+    state.shots.push(
+      createShot({
+        kind: "blast",
+        x: x + 4,
+        y,
+        vx: shotVx * 0.76,
+        damage: 34 + state.weaponLevel * 8,
+        radius: 7.5,
+        life: 62,
+        pierce: 3,
+        blastRadius: 58,
+        terrainDamage: 42
+      })
+    );
+    playSfx("blast_shot");
+  }
+
+  if (state.chainLevel > 0 && volley % clamp(12 - state.chainLevel * 2, 5, 10) === 0) {
+    queueShot(5, {
+      kind: "laser",
+      x: x + 1,
+      y: y - 5,
+      vx: shotVx * 0.95,
+      vy: -0.18,
+      damage: 8 + state.chainLevel * 2,
+      radius: 2.8,
+      life: 50
+    });
+    queueShot(9, {
+      kind: "laser",
+      x: x + 1,
+      y: y + 5,
+      vx: shotVx * 0.95,
+      vy: 0.18,
+      damage: 8 + state.chainLevel * 2,
+      radius: 2.8,
+      life: 50
     });
   }
 }
@@ -710,12 +951,13 @@ function spawnEnemy() {
   const minY = corridor.ceiling + 22;
   const maxY = corridor.floor - 22;
   const y = randi(minY, Math.max(minY + 4, maxY));
-  const hp = spec.hpBase + stage * spec.hpPerStage;
-  const eliteChance = clamp((stage - 4) * 0.03, 0, 0.36);
+  const hpRamp = 0.62 + stage * 0.065;
+  const hp = Math.floor(spec.hpBase + spec.hpPerStage * hpRamp);
+  const eliteChance = clamp((stage - 8) * 0.012, 0, 0.22);
   const elite = Math.random() < eliteChance;
   const sizeScale = elite ? 1.22 : 1;
-  const hpScaled = Math.floor(hp * (elite ? 1.85 : 1));
-  const fireBase = randi(84, 126) - stage * 2;
+  const hpScaled = Math.floor(hp * (elite ? 1.42 : 1));
+  const fireBase = randi(114, 156) - stage;
 
   state.enemies.push({
     type,
@@ -725,13 +967,13 @@ function spawnEnemy() {
     h: Math.floor(randi(spec.hMin, spec.hMax) * sizeScale),
     hp: hpScaled,
     maxHp: hpScaled,
-    value: Math.floor((spec.scoreBase + stage * 10) * (elite ? 2.1 : 1)),
+    value: Math.floor((spec.scoreBase + stage * 8) * (elite ? 1.8 : 1)),
     elite,
-    vx: (rand(spec.speedMin, spec.speedMax) + stage * 0.06) * (elite ? 1.08 : 1),
+    vx: (rand(spec.speedMin, spec.speedMax) + stage * 0.022) * (elite ? 1.04 : 1),
     wobble: rand(0, Math.PI * 2),
     drift: rand(spec.driftMin, spec.driftMax),
     diveArmed: type === "diver" ? Math.random() > 0.45 : false,
-    fireCooldown: clamp(fireBase, 30, 132)
+    fireCooldown: clamp(fireBase, 38, 170)
   });
 }
 
@@ -759,7 +1001,7 @@ function updatePlayer() {
     state.player.shotCooldown -= 1;
   } else {
     spawnShot();
-    state.player.shotCooldown = Math.max(3, 10 - Math.floor(stage * 0.35) - state.rapidLevel * 2);
+    state.player.shotCooldown = Math.max(4, 10 - Math.floor(stage * 0.12) - state.rapidLevel * 2);
   }
 
 }
@@ -768,10 +1010,10 @@ function updateEnemies() {
   const stage = currentStage();
   state.enemySpawnTimer -= 1;
   if (state.enemySpawnTimer <= 0) {
-    const pack = clamp(1 + Math.floor(stage / 7), 1, 5);
+    const pack = clamp(1 + Math.floor(stage / 12), 1, 4);
     for (let i = 0; i < pack; i += 1) spawnEnemy();
-    const base = 122 - stage * 3;
-    state.enemySpawnTimer = clamp(randi(base - 16, base + 10), 16, 120);
+    const base = 142 - stage * 1.2;
+    state.enemySpawnTimer = clamp(randi(base - 18, base + 14), 42, 170);
   }
 
   for (let i = state.enemies.length - 1; i >= 0; i -= 1) {
@@ -795,7 +1037,7 @@ function updateEnemies() {
     const corridor = corridorBoundsAtScreenX(enemy.x);
     enemy.y = clamp(enemy.y, corridor.ceiling + 14, corridor.floor - 14);
 
-    if (stage >= 6 && enemy.x < WIDTH - 60) {
+    if (stage >= 9 && enemy.x < WIDTH - 70) {
       enemy.fireCooldown -= 1;
       if (enemy.fireCooldown <= 0) {
         const tx = state.player.x + rand(-14, 14);
@@ -803,7 +1045,7 @@ function updateEnemies() {
         const dxAim = tx - enemy.x;
         const dyAim = ty - enemy.y;
         const len = Math.hypot(dxAim, dyAim) || 1;
-        const speed = 2.2 + stage * 0.09 + (enemy.elite ? 0.55 : 0);
+        const speed = 1.9 + stage * 0.04 + (enemy.elite ? 0.3 : 0);
         state.enemyProjectiles.push({
           x: enemy.x,
           y: enemy.y,
@@ -812,7 +1054,7 @@ function updateEnemies() {
           life: 220,
           elite: enemy.elite
         });
-        enemy.fireCooldown = clamp(randi(118 - stage * 3, 156 - stage), 20, 132);
+        enemy.fireCooldown = clamp(randi(132 - stage * 1.5, 178 - stage * 0.4), 48, 176);
       }
     }
 
@@ -837,32 +1079,118 @@ function updateEnemies() {
   }
 }
 
+function updateShotQueue() {
+  for (let i = state.shotQueue.length - 1; i >= 0; i -= 1) {
+    const entry = state.shotQueue[i];
+    entry.delay -= 1;
+    if (entry.delay > 0) continue;
+    state.shots.push(createShot(entry.params));
+    state.shotQueue.splice(i, 1);
+  }
+}
+
+function applyShotSplash(shot, x, y, damageScale = 0.56) {
+  if (shot.blastRadius <= 0) return;
+  const radius = shot.blastRadius;
+  for (let i = state.enemies.length - 1; i >= 0; i -= 1) {
+    const enemy = state.enemies[i];
+    const d = Math.hypot(enemy.x - x, enemy.y - y);
+    if (d > radius) continue;
+    const dmg = Math.max(4, shot.damage * damageScale * (1 - d / radius));
+    enemy.hp -= dmg;
+    if (enemy.hp <= 0) {
+      state.score += enemy.value || 68;
+      spawnExplosion(enemy.x, enemy.y, "#9fd5ff", 16);
+      spawnFloatText(enemy.x, enemy.y - 10, `+${enemy.value || 68}`, "#a6ffbf", 14, 24);
+      state.enemies.splice(i, 1);
+    }
+  }
+  if (shot.terrainDamage > 0) {
+    applyBlastDamage(x, y, shot.terrainDamage, 2);
+  }
+  spawnShockwave(x, y, radius * 0.85, 12, "#ffd3a1");
+}
+
 function updateShots() {
   const stage = currentStage();
+  updateShotQueue();
+
   for (let i = state.shots.length - 1; i >= 0; i -= 1) {
     const shot = state.shots[i];
+    shot.life -= 1;
+    if (shot.life <= 0) {
+      state.shots.splice(i, 1);
+      continue;
+    }
+
+    if (shot.kind === "pulse") {
+      shot.wobble += shot.wobbleSpeed;
+      shot.y += Math.sin(shot.wobble) * 0.75;
+    } else if (shot.kind === "rocket") {
+      let target = null;
+      let closest = Infinity;
+      for (const enemy of state.enemies) {
+        if (enemy.x < shot.x - 10) continue;
+        const d = Math.hypot(enemy.x - shot.x, enemy.y - shot.y);
+        if (d < 180 && d < closest) {
+          closest = d;
+          target = enemy;
+        }
+      }
+      if (target) {
+        shot.vy += clamp((target.y - shot.y) * shot.homing, -0.26, 0.26);
+      }
+      shot.vy *= 0.97;
+    }
+
     shot.x += shot.vx;
     shot.y += shot.vy;
 
-    let hit = false;
+    let removeShot = false;
     for (let ei = state.enemies.length - 1; ei >= 0; ei -= 1) {
       const enemy = state.enemies[ei];
       const dx = Math.abs(shot.x - enemy.x);
       const dy = Math.abs(shot.y - enemy.y);
-      if (dx > enemy.w * 0.55 || dy > enemy.h * 0.65) continue;
-      enemy.hp -= 10;
-      spawnFloatText(shot.x + 2, shot.y - 4, "10", "#90ecff", 11, 16);
-      hit = true;
+      const reachX = enemy.w * 0.55 + shot.radius;
+      const reachY = enemy.h * 0.65 + shot.radius;
+      if (dx > reachX || dy > reachY) continue;
+
+      enemy.hp -= shot.damage;
+      spawnFloatText(shot.x + 2, shot.y - 4, `${Math.floor(shot.damage)}`, "#90ecff", 11, 16);
+
+      if (shot.kind === "rocket" || shot.kind === "blast") {
+        applyShotSplash(shot, shot.x, shot.y);
+        spawnExplosion(shot.x, shot.y, shot.kind === "blast" ? "#ffd882" : "#ffb978", 22);
+        removeShot = true;
+      } else if (shot.kind === "pulse" && shot.split > 0) {
+        spawnSplitShards(shot.x, shot.y, shot.damage);
+        shot.split = 0;
+      }
+
       if (enemy.hp <= 0) {
         state.score += enemy.value || 55 + stage * 12;
         spawnExplosion(enemy.x, enemy.y, "#9fd5ff", 18);
         spawnFloatText(enemy.x, enemy.y - 10, `+${enemy.value || 55 + stage * 12}`, "#a6ffbf", 14, 28);
         state.enemies.splice(ei, 1);
       }
-      break;
+
+      if (shot.pierce > 0) {
+        shot.pierce -= 1;
+      } else {
+        removeShot = true;
+      }
+      if (removeShot) break;
     }
 
-    if (hit || shot.x > WIDTH + 16) state.shots.splice(i, 1);
+    if (
+      removeShot ||
+      shot.x > WIDTH + 30 ||
+      shot.x < -20 ||
+      shot.y < -20 ||
+      shot.y > HEIGHT + 20
+    ) {
+      state.shots.splice(i, 1);
+    }
   }
 }
 
@@ -1045,9 +1373,41 @@ function explodeBomb(bomb, impactY) {
   }
 }
 
+function updateBombQueue() {
+  for (let i = state.bombQueue.length - 1; i >= 0; i -= 1) {
+    const entry = state.bombQueue[i];
+    entry.delay -= 1;
+    if (entry.delay > 0) continue;
+    state.bombsFalling.push(createBomb(entry.params));
+    state.bombQueue.splice(i, 1);
+  }
+}
+
 function updateBombs() {
+  if (state.megaCooldown > 0) state.megaCooldown -= 1;
+  updateBombQueue();
+
   for (let i = state.bombsFalling.length - 1; i >= 0; i -= 1) {
     const b = state.bombsFalling[i];
+    if (b.phase === "runner") {
+      b.x += (b.vxWorld + 1.6) - state.scrollSpeed;
+      b.runnerTimer -= 1;
+      if (b.runnerTimer <= 0) {
+        b.runnerTimer = 7;
+        b.runnerSteps += 1;
+        const burst = b.blast * (0.33 + Math.min(0.22, b.runnerSteps * 0.03));
+        applyBlastDamage(b.x, b.y, burst, 4);
+        spawnExplosion(b.x, b.y, "#ff9c5e", 24);
+        spawnShockwave(b.x, b.y, burst * 0.72, 12, "#ffd19f");
+      }
+
+      if (b.runnerSteps >= 6 || b.x > WIDTH + 28) {
+        explodeBomb({ ...b, blast: b.blast * 0.85 }, b.y);
+        state.bombsFalling.splice(i, 1);
+      }
+      continue;
+    }
+
     // World-space horizontal velocity with light drag, then convert to screen-space.
     b.vxWorld = Math.max(state.scrollSpeed * 0.95, b.vxWorld * 0.997);
     b.vy += 0.16;
@@ -1058,6 +1418,35 @@ function updateBombs() {
     const top = columnFloorTop(col);
 
     if (b.y >= top) {
+      if (b.type === "runner") {
+        b.phase = "runner";
+        b.y = top + 4;
+        b.runnerTimer = 6;
+        b.runnerSteps = 0;
+        spawnShockwave(b.x, top, 36, 10, "#ffd8a5");
+        continue;
+      }
+
+      if (b.type === "cluster") {
+        const miniCount = 4 + state.chainLevel;
+        for (let k = 0; k < miniCount; k += 1) {
+          const spread = rand(-1.4, 1.6);
+          const burstDelay = randi(2, 18);
+          queueBomb(burstDelay, {
+            type: "bomblet",
+            x: b.x + rand(-10, 10),
+            y: b.y - rand(8, 20),
+            vy: rand(0.8, 1.5),
+            vxWorld: state.scrollSpeed + 1.1 + spread,
+            blast: b.blast * rand(0.24, 0.35)
+          });
+        }
+        spawnExplosion(b.x, top, "#ffbf6f", 40);
+        spawnShockwave(b.x, top, b.blast * 0.7, 14, "#ffe7bf");
+        state.bombsFalling.splice(i, 1);
+        continue;
+      }
+
       explodeBomb(b, top);
       state.bombsFalling.splice(i, 1);
       continue;
@@ -1231,32 +1620,95 @@ function drawBunkers() {
 
 function drawBombs() {
   for (const b of state.bombsFalling) {
+    if (b.phase === "runner") {
+      ctx.fillStyle = "#ff7b4b";
+      ctx.fillRect(b.x - 6, b.y - 4, 12, 8);
+      ctx.fillStyle = "#ffe2a1";
+      ctx.fillRect(b.x - 1, b.y - 1, 6, 2);
+      continue;
+    }
+
     const vxScreen = b.vxWorld - state.scrollSpeed;
     const angle = Math.atan2(b.vy, vxScreen);
+    const scale = b.type === "mega" ? 1.75 : b.type === "bomblet" ? 0.6 : b.type === "cluster" ? 1.15 : 1;
 
     ctx.save();
     ctx.translate(b.x, b.y);
     ctx.rotate(angle);
-    ctx.fillStyle = "#ffae45";
-    ctx.fillRect(-9, -3, 18, 6);
+    ctx.fillStyle = b.type === "mega" ? "#ff5f45" : b.type === "cluster" ? "#ffbf64" : "#ffae45";
+    ctx.fillRect(-9 * scale, -3 * scale, 18 * scale, 6 * scale);
     ctx.fillStyle = "#ffe9b0";
-    ctx.fillRect(6, -1.5, 4, 3);
+    ctx.fillRect(6 * scale, -1.5 * scale, 4 * scale, 3 * scale);
     ctx.restore();
   }
 }
 
 function drawShots() {
   for (const shot of state.shots) {
-    const tailX = shot.x - Math.max(7, shot.vx * 0.9);
-    const tailY = shot.y - shot.vy * 1.2;
-    ctx.strokeStyle = "rgba(120, 235, 255, 0.8)";
+    const palette = shotTypePalette[shot.kind] || shotTypePalette.laser;
+    const tailX = shot.x - Math.max(6, Math.abs(shot.vx) * 0.9);
+    const tailY = shot.y - shot.vy * 1.25;
+
+    if (shot.kind === "rocket") {
+      const angle = Math.atan2(shot.vy, shot.vx || 0.001);
+      ctx.save();
+      ctx.translate(shot.x, shot.y);
+      ctx.rotate(angle);
+      ctx.fillStyle = palette.glow;
+      ctx.fillRect(-10, -3.4, 16, 6.8);
+      ctx.fillStyle = palette.core;
+      ctx.fillRect(-2, -2, 8, 4);
+      ctx.fillStyle = "#ff8e5f";
+      ctx.fillRect(-12, -1.5, 4, 3);
+      ctx.restore();
+      continue;
+    }
+
+    if (shot.kind === "pulse") {
+      ctx.strokeStyle = palette.glow;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(shot.x, shot.y, shot.radius + 2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = palette.core;
+      ctx.beginPath();
+      ctx.arc(shot.x, shot.y, shot.radius, 0, Math.PI * 2);
+      ctx.fill();
+      continue;
+    }
+
+    if (shot.kind === "blast") {
+      ctx.strokeStyle = palette.glow;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(tailX - 4, tailY);
+      ctx.lineTo(shot.x + 10, shot.y);
+      ctx.stroke();
+      ctx.fillStyle = palette.core;
+      ctx.fillRect(shot.x - 2, shot.y - 4, 13, 8);
+      continue;
+    }
+
+    if (shot.kind === "shard") {
+      ctx.strokeStyle = palette.glow;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(shot.x + 4, shot.y);
+      ctx.stroke();
+      ctx.fillStyle = palette.core;
+      ctx.fillRect(shot.x - 1, shot.y - 1, 4, 2);
+      continue;
+    }
+
+    ctx.strokeStyle = palette.glow;
     ctx.lineWidth = 3.5;
     ctx.beginPath();
     ctx.moveTo(tailX, tailY);
     ctx.lineTo(shot.x + 8, shot.y);
     ctx.stroke();
 
-    ctx.fillStyle = "#e8fdff";
+    ctx.fillStyle = palette.core;
     ctx.fillRect(shot.x - 1, shot.y - 2, 10, 4);
     ctx.fillStyle = "#6ed6ff";
     ctx.fillRect(shot.x + 6, shot.y - 1, 4, 2);
@@ -1427,11 +1879,13 @@ function drawPauseOverlay() {
 function updateUI() {
   const stage = currentStage();
   ui.level.textContent = `Stage ${stage} | Enemies ${state.enemies.length}`;
-  ui.score.textContent = `Score ${Math.floor(state.score)}`;
-  ui.best.textContent = `Best ${Math.floor(state.highScore)}`;
+  ui.score.textContent = `SCORE ${Math.floor(state.score)}`;
+  ui.best.textContent = `HI SCORE ${Math.floor(state.highScore)}`;
   ui.combo.textContent = `Combo x${state.combo.toFixed(1)}`;
-  ui.power.textContent = `Power W${state.weaponLevel} B${state.bombLevel} R${state.rapidLevel} M${state.magnetLevel} C${state.chainLevel} S${state.speedLevel} D${state.shieldLevel} P${state.pulseLevel}`;
-  ui.lives.textContent = `Lives ${state.lives}`;
+  ui.power.textContent = `Power W${state.weaponLevel} B${state.bombLevel} R${state.rapidLevel} M${state.magnetLevel} C${state.chainLevel} S${state.speedLevel} D${state.shieldLevel} P${state.pulseLevel} | Arsenal MIX`;
+  ui.lives.textContent = `x${state.lives}`;
+  ui.bombMode.textContent = `Bomb ${state.bombMode.toUpperCase()}`;
+  ui.megaCd.textContent = state.megaCooldown <= 0 ? "Mega Ready" : `Mega CD ${(state.megaCooldown / 60).toFixed(1)}s`;
   ui.fuel.textContent = "Fuel ∞";
   ui.bombs.textContent = UNLIMITED_BOMBS ? "Bombs ∞" : `Bombs ${state.bombs}`;
 }
@@ -1507,6 +1961,11 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
   }
 
+  if (e.code === "Digit1") state.bombMode = "standard";
+  if (e.code === "Digit2") state.bombMode = "cluster";
+  if (e.code === "Digit3") state.bombMode = "mega";
+  if (e.code === "Digit4") state.bombMode = "runner";
+
   if (e.code === "KeyR") {
     state.score = 0;
     state.lives = 3;
@@ -1518,6 +1977,8 @@ window.addEventListener("keydown", (e) => {
     state.rapidLevel = 0;
     state.magnetLevel = 0;
     state.chainLevel = 0;
+    state.bombMode = "standard";
+    state.megaCooldown = 0;
     initLevel();
   }
 

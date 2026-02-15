@@ -9,24 +9,34 @@
   <body>
     <main class="shell">
       <header class="hud">
-        <h1>Degradius</h1>
+        <div class="hud-top">
+          <div class="hud-leading">
+            <span class="life-ship" aria-hidden="true"></span>
+            <span id="lives">x3</span>
+          </div>
+          <h1>Degradius</h1>
+          <div class="hud-trailing">
+            <span id="best">HI SCORE 0</span>
+            <span class="hud-sep">|</span>
+            <span id="score">SCORE 0</span>
+          </div>
+        </div>
         <div class="stats">
-          <span id="level">Level 1</span>
-          <span id="score">Score 0</span>
-          <span id="best">Best 0</span>
+          <span id="level">Stage 1</span>
           <span id="combo">Combo x1.0</span>
           <span id="power">Power W1 B1 R0 M0 C0 S1 D0 P0</span>
-          <span id="lives">Lives 3</span>
+          <span id="bombMode">Bomb STD</span>
+          <span id="megaCd">Mega Ready</span>
           <span id="fuel">Fuel ∞</span>
-          <span id="bombs">Bombs 30</span>
+          <span id="bombs">Bombs ∞</span>
         </div>
       </header>
 
       <canvas id="game" width="960" height="600" aria-label="Bunker Dive game"></canvas>
 
       <section class="help">
-        <p><strong>Move:</strong> WASD or Arrow keys | <strong>Bomb:</strong> Space | <strong>Pause:</strong> P | <strong>Restart:</strong> R</p>
-        <p>Drop bombs straight down, chew through hard layers, and destroy all bunkers.</p>
+        <p><strong>Move:</strong> WASD or Arrow keys | <strong>Bomb:</strong> Space | <strong>Modes:</strong> 1 Standard, 2 Cluster, 3 Mega, 4 Runner | <strong>Pause:</strong> P | <strong>Restart:</strong> R</p>
+        <p>Laser arsenal auto-combos rockets, pulses, spread shards, and heavy blasts. Bombs chain and stack over time.</p>
       </section>
     </main>
 
