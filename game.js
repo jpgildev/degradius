@@ -104,6 +104,7 @@ const state = {
   message: ""
 };
 let audioCtx = null;
+let audioUnlocked = false;
 
 function rand(min, max) {
   return Math.random() * (max - min) + min;
@@ -126,10 +127,26 @@ function ensureAudio() {
   return audioCtx;
 }
 
+function unlockAudio() {
+  if (!SFX_ENABLED) return;
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  if (ctx.state === "running") {
+    audioUnlocked = true;
+    return;
+  }
+  ctx.resume()
+    .then(() => {
+      audioUnlocked = ctx.state === "running";
+      if (audioUnlocked) playTone(660, 880, 0.035, 0.012, "triangle");
+    })
+    .catch(() => {});
+}
+
 function playTone(freqStart, freqEnd, duration, gain, type = "square") {
   const ctx = ensureAudio();
   if (!ctx) return;
-  if (ctx.state === "suspended") ctx.resume();
+  if (ctx.state !== "running" || !audioUnlocked) return;
   const t0 = ctx.currentTime;
   const osc = ctx.createOscillator();
   const g = ctx.createGain();
@@ -147,7 +164,7 @@ function playTone(freqStart, freqEnd, duration, gain, type = "square") {
 function playNoise(duration, gain, highpass = 700) {
   const ctx = ensureAudio();
   if (!ctx) return;
-  if (ctx.state === "suspended") ctx.resume();
+  if (ctx.state !== "running" || !audioUnlocked) return;
   const len = Math.floor(ctx.sampleRate * duration);
   const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
   const data = buffer.getChannelData(0);
@@ -1478,8 +1495,7 @@ function loop() {
 }
 
 window.addEventListener("keydown", (e) => {
-  const ctx = ensureAudio();
-  if (ctx && ctx.state === "suspended") ctx.resume();
+  unlockAudio();
 
   if (e.code === "ArrowLeft" || e.code === "KeyA") keys.left = true;
   if (e.code === "ArrowRight" || e.code === "KeyD") keys.right = true;
@@ -1510,6 +1526,9 @@ window.addEventListener("keydown", (e) => {
     if (state.paused) keys.bomb = false;
   }
 });
+
+window.addEventListener("pointerdown", unlockAudio);
+window.addEventListener("touchstart", unlockAudio, { passive: true });
 
 window.addEventListener("keyup", (e) => {
   if (e.code === "ArrowLeft" || e.code === "KeyA") keys.left = false;
