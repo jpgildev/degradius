@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Degradius</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hud">
+        <h1>Degradius</h1>
+        <div class="stats">
+          <span id="level">Level 1</span>
+          <span id="score">Score 0</span>
+          <span id="best">Best 0</span>
+          <span id="combo">Combo x1.0</span>
+          <span id="power">Power W1 B1 S1</span>
+          <span id="fuel">Fuel 100</span>
+          <span id="bombs">Bombs 30</span>
+        </div>
+      </header>
+
+      <canvas id="game" width="960" height="600" aria-label="Bunker Dive game"></canvas>
+
+      <section class="help">
+        <p><strong>Move:</strong> WASD or Arrow keys | <strong>Bomb:</strong> Space | <strong>Pause:</strong> P | <strong>Restart:</strong> R</p>
+        <p>Drop bombs straight down, chew through hard layers, and destroy all bunkers.</p>
+      </section>
+    </main>
+
+    <script src="game.js"></script>
+  </body>
+</html>
