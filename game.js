@@ -18,6 +18,7 @@ const CELL_W = 8;
 const COLS = Math.floor(WIDTH / CELL_W) + 2;
 const SCROLL_SPEED_SCALE = 1 / 6;
 const UNLIMITED_BOMBS = true;
+const SFX_ENABLED = true;
 
 const hardnessPalette = [
   "#8f5f2f", // soft dirt
@@ -102,6 +103,7 @@ const state = {
   gameOver: false,
   message: ""
 };
+let audioCtx = null;
 
 function rand(min, max) {
   return Math.random() * (max - min) + min;
@@ -113,6 +115,88 @@ function randi(min, max) {
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
+}
+
+function ensureAudio() {
+  if (!SFX_ENABLED) return null;
+  if (audioCtx) return audioCtx;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  audioCtx = new Ctx();
+  return audioCtx;
+}
+
+function playTone(freqStart, freqEnd, duration, gain, type = "square") {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  if (ctx.state === "suspended") ctx.resume();
+  const t0 = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freqStart, t0);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(30, freqEnd), t0 + duration);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(gain, t0 + Math.min(0.02, duration * 0.3));
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + duration + 0.01);
+}
+
+function playNoise(duration, gain, highpass = 700) {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  if (ctx.state === "suspended") ctx.resume();
+  const len = Math.floor(ctx.sampleRate * duration);
+  const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < len; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  const hp = ctx.createBiquadFilter();
+  hp.type = "highpass";
+  hp.frequency.value = highpass;
+  const g = ctx.createGain();
+  const t0 = ctx.currentTime;
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+  src.connect(hp).connect(g).connect(ctx.destination);
+  src.start(t0);
+  src.stop(t0 + duration + 0.01);
+}
+
+function playSfx(kind) {
+  if (!SFX_ENABLED) return;
+  if (kind === "bomb_drop") {
+    playTone(260, 140, 0.08, 0.03, "triangle");
+    return;
+  }
+  if (kind === "blast") {
+    playNoise(0.12, 0.08, 450);
+    playTone(180, 70, 0.16, 0.035, "sawtooth");
+    return;
+  }
+  if (kind === "pickup") {
+    playTone(430, 860, 0.08, 0.03, "square");
+    return;
+  }
+  if (kind === "hit") {
+    playNoise(0.08, 0.05, 900);
+    playTone(220, 120, 0.1, 0.02, "square");
+    return;
+  }
+  if (kind === "life_lost") {
+    playNoise(0.2, 0.1, 500);
+    playTone(240, 70, 0.28, 0.05, "sawtooth");
+    return;
+  }
+  if (kind === "game_over") {
+    playNoise(0.45, 0.16, 350);
+    playTone(300, 45, 0.55, 0.08, "sawtooth");
+  }
 }
 
 function currentStage() {
@@ -388,6 +472,7 @@ function spawnBomb() {
     vy: 1.8,
     blast: 82 * blastScale
   });
+  playSfx("bomb_drop");
 }
 
 function spawnShot() {
@@ -434,19 +519,31 @@ function loseLife(reason) {
   if (state.gameOver || state.player.invulnTimer > 0) return;
 
   state.lives -= 1;
-  spawnExplosion(state.player.x, state.player.y, "#ff8080", 42);
+  spawnExplosion(state.player.x, state.player.y, "#ff8080", 68);
+  spawnShockwave(state.player.x, state.player.y, 84, 20, "#ffb0b0");
 
   if (state.lives <= 0) {
+    for (let i = 0; i < 12; i += 1) {
+      const a = (Math.PI * 2 * i) / 12;
+      const d = 24 + i * 7;
+      const ex = state.player.x + Math.cos(a) * d;
+      const ey = state.player.y + Math.sin(a) * d * 0.75;
+      spawnExplosion(ex, ey, i % 2 === 0 ? "#ff8459" : "#ffd088", 80 - i * 2);
+      spawnShockwave(ex, ey, 110 + i * 8, 24, "#ffd6a4");
+    }
+    playSfx("game_over");
     state.gameOver = true;
     state.message = `${reason} No lives left. Press R to retry.`;
     return;
   }
 
+  playSfx("life_lost");
   state.player.invulnTimer = 130;
   showToast(`Life Lost - ${state.lives} left`);
 }
 
 function applyUpgrade(type) {
+  playSfx("pickup");
   if (type === "weapon") {
     if (state.weaponLevel < 4) {
       state.weaponLevel += 1;
@@ -709,6 +806,7 @@ function updateEnemies() {
         state.shieldLevel -= 1;
         spawnShockwave(state.player.x, state.player.y, 44, 14, "#97f7ff");
         showToast(state.shieldLevel > 0 ? "Shield Hit" : "Shield Down");
+        playSfx("hit");
       } else {
         loseLife("Hit.");
         spawnExplosion(enemy.x, enemy.y, "#ff6666", 28);
@@ -766,6 +864,7 @@ function updateEnemyProjectiles() {
           state.shieldLevel -= 1;
           spawnShockwave(state.player.x, state.player.y, 40, 12, "#97f7ff");
           showToast(state.shieldLevel > 0 ? "Shield Hit" : "Shield Down");
+          playSfx("hit");
         } else {
           loseLife("Shot down.");
         }
@@ -911,6 +1010,7 @@ function explodeBomb(bomb, impactY) {
   applyBlastDamage(bomb.x, impactY, bomb.blast, 8);
   spawnExplosion(bomb.x, impactY, "#ffc866", 78);
   spawnShockwave(bomb.x, impactY, bomb.blast * 1.45, 24, "#ffefb8");
+  playSfx("blast");
 
   if (state.chainLevel > 0) {
     const chainCount = 1 + state.chainLevel;
@@ -1378,6 +1478,9 @@ function loop() {
 }
 
 window.addEventListener("keydown", (e) => {
+  const ctx = ensureAudio();
+  if (ctx && ctx.state === "suspended") ctx.resume();
+
   if (e.code === "ArrowLeft" || e.code === "KeyA") keys.left = true;
   if (e.code === "ArrowRight" || e.code === "KeyD") keys.right = true;
   if (e.code === "ArrowUp" || e.code === "KeyW") keys.up = true;
